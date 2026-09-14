@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: styledna
+      POSTGRES_PASSWORD: styledna
+      POSTGRES_DB: styledna
+    volumes:
+      - styledna_db:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      DATABASE_URL: postgresql+psycopg://styledna:styledna@db:5432/styledna
+
+    depends_on:
+      - db
+
+volumes:
+  styledna_db:
