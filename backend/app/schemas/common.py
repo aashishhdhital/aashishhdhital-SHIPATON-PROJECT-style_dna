@@ -27,5 +27,5 @@ NonNegativeInt = Annotated[int, Field(ge=0)]
 # (Kept in sync manually; the DB remains the enforcing authority.)
 ProviderStatus = Literal["ok", "degraded", "failed"]
 Reaction = Literal["like", "maybe", "dislike"]
-SourceType = Literal["image", "pinterest"]
+SourceType = Literal["image", "pinterest", "flickr"]
 InspirationStatus = Literal["pending", "processed", "failed"]

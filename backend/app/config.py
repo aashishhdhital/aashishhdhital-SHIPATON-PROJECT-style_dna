@@ -80,6 +80,18 @@ class Settings(BaseModel):
     max_image_bytes: int = Field(default=_DEFAULT_MAX_IMAGE_BYTES, gt=0)
     allowed_image_mime: tuple[str, ...] = Field(default=_ALLOWED_IMAGE_MIME)
 
+    # External providers. "mock" keeps the original deterministic fixtures.
+    # Real demo: ANALYZER_PROVIDER=gemini, INSPIRATION/RECOMMENDATION=flickr.
+    analyzer_provider: str = Field(default="mock")
+    inspiration_provider: str = Field(default="mock")
+    recommendation_provider: str = Field(default="mock")
+
+    # Secrets -- empty by default so the app still starts in mock mode.
+    gemini_api_key: str = ""
+    gemini_model: str = Field(default="gemini-3.6-flash")
+    flickr_api_key: str = ""
+    flickr_api_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -100,6 +112,16 @@ def get_settings() -> Settings:
         max_image_bytes=int(
             os.getenv("MAX_IMAGE_BYTES", str(_DEFAULT_MAX_IMAGE_BYTES))
         ),
+        analyzer_provider=os.getenv("ANALYZER_PROVIDER", "mock").strip().lower(),
+        inspiration_provider=os.getenv("INSPIRATION_PROVIDER", "mock").strip().lower(),
+        recommendation_provider=os.getenv(
+            "RECOMMENDATION_PROVIDER", "mock"
+        ).strip().lower(),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+        or "gemini-3.6-flash",
+        flickr_api_key=os.getenv("FLICKR_API_KEY", "").strip(),
+        flickr_api_secret=os.getenv("FLICKR_API_SECRET", "").strip(),
     )
 
 

@@ -1,31 +1,35 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-type RootTabParamList = {
-  Inspiration: undefined;
-  'Style DNA': undefined;
-  Generate: undefined;
-  Profile: undefined;
-};
+import { analyzeStyle, getDevelopmentUserId } from '../services/api';
+import type { RootTabParamList } from '../navigation';
 
 type InspirationNavigation = BottomTabNavigationProp<RootTabParamList>;
 
 export default function InspirationScreen() {
   const navigation = useNavigation<InspirationNavigation>();
   const [images, setImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [flickrUrl, setFlickrUrl] = useState('');
   const [isPicking, setIsPicking] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const trimmedFlickrUrl = flickrUrl.trim();
+  const hasFlickrUrl = trimmedFlickrUrl.length > 0;
+  const canAnalyze = (hasFlickrUrl || images.length >= 3) && !isAnalyzing;
 
   const addInspiration = async () => {
     if (isPicking) {
@@ -66,15 +70,54 @@ export default function InspirationScreen() {
     setImages((currentImages) => currentImages.filter((image) => image.uri !== uri));
   };
 
+  const buildStyleDna = async () => {
+    if (!canAnalyze) {
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsAnalyzing(true);
+    try {
+      const analysis = await analyzeStyle(
+        images,
+        getDevelopmentUserId(),
+        hasFlickrUrl ? [trimmedFlickrUrl] : [],
+      );
+      navigation.navigate('Style DNA', { analysis });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Style analysis failed.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.eyebrow}>DISCOVER YOUR STYLE</Text>
         <Text style={styles.title}>Inspiration</Text>
         <Text style={styles.subtitle}>Select outfits you love so we can learn what feels like you.</Text>
+
+        <Text nativeID="flickrUrlLabel" style={styles.inputLabel}>
+          Or paste a Flickr URL
+        </Text>
+        <TextInput
+          accessibilityLabel="Flickr inspiration URL"
+          accessibilityLabelledBy="flickrUrlLabel"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!isAnalyzing}
+          keyboardType="url"
+          onChangeText={setFlickrUrl}
+          placeholder="https://flic.kr/ps/48aJQy"
+          placeholderTextColor="#8D7B6D"
+          style={styles.urlInput}
+          value={flickrUrl}
+        />
 
         <Pressable
           accessibilityRole="button"
@@ -91,7 +134,9 @@ export default function InspirationScreen() {
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>✦</Text>
             <Text style={styles.emptyTitle}>Your inspiration board is empty</Text>
-            <Text style={styles.emptyText}>Add at least three outfits to start shaping your Style DNA.</Text>
+            <Text style={styles.emptyText}>
+              Add at least three outfits, or paste a Flickr URL, to start shaping your Style DNA.
+            </Text>
           </View>
         ) : (
           <View style={styles.grid}>
@@ -116,16 +161,25 @@ export default function InspirationScreen() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: images.length < 3 }}
-          disabled={images.length < 3}
-          onPress={() => navigation.navigate('Style DNA')}
-          style={({ pressed }) => [styles.cta, images.length < 3 && styles.ctaDisabled, pressed && styles.pressed]}
+          accessibilityState={{ disabled: !canAnalyze, busy: isAnalyzing }}
+          disabled={!canAnalyze}
+          onPress={buildStyleDna}
+          style={({ pressed }) => [styles.cta, !canAnalyze && styles.ctaDisabled, pressed && styles.pressed]}
         >
-          <Text style={[styles.ctaText, images.length < 3 && styles.ctaTextDisabled]}>Build My Style DNA</Text>
-          <Text style={[styles.ctaArrow, images.length < 3 && styles.ctaTextDisabled]}>→</Text>
+          {isAnalyzing ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={[styles.ctaArrow, !canAnalyze && styles.ctaTextDisabled]}>→</Text>
+          )}
+          <Text style={[styles.ctaText, !canAnalyze && styles.ctaTextDisabled]}>
+            {isAnalyzing ? 'Analyzing your style...' : 'Build My Style DNA'}
+          </Text>
         </Pressable>
-        {images.length > 0 && images.length < 3 ? (
-          <Text style={styles.helperText}>Add {3 - images.length} more {3 - images.length === 1 ? 'image' : 'images'} to continue.</Text>
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        {images.length > 0 && images.length < 3 && !hasFlickrUrl ? (
+          <Text style={styles.helperText}>
+            Add {3 - images.length} more {3 - images.length === 1 ? 'image' : 'images'} to continue, or paste a Flickr URL.
+          </Text>
         ) : null}
       </ScrollView>
     </SafeAreaView>
@@ -158,6 +212,23 @@ const styles = StyleSheet.create({
     color: '#6E625A',
     fontSize: 17,
     lineHeight: 25,
+  },
+  inputLabel: {
+    marginTop: 24,
+    color: '#2E2925',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  urlInput: {
+    minHeight: 52,
+    marginTop: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E4D9CE',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    color: '#2E2925',
+    fontSize: 16,
   },
   addButton: {
     minHeight: 52,
@@ -277,6 +348,13 @@ const styles = StyleSheet.create({
     marginTop: 10,
     color: '#8D7B6D',
     fontSize: 13,
+    textAlign: 'center',
+  },
+  errorText: {
+    marginTop: 12,
+    color: '#A13F38',
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: 'center',
   },
 });

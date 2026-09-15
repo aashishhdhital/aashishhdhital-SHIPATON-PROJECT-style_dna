@@ -6,13 +6,7 @@ import InspirationScreen from './src/screens/InspirationScreen';
 import StyleDnaScreen from './src/screens/StyleDnaScreen';
 import GenerateScreen from './src/screens/GenerateScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
-
-export type RootTabParamList = {
-  Inspiration: undefined;
-  'Style DNA': undefined;
-  Generate: undefined;
-  Profile: undefined;
-};
+import type { RootTabParamList } from './src/navigation';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 

@@ -3,7 +3,9 @@ annotated-types==0.8.0
 anyio==4.15.1
 click==8.5.0
 fastapi==0.141.1
+google-genai==1.75.0
 h11==0.16.0
+httpx==0.28.1
 httptools==0.8.0
 idna==3.19
 psycopg==3.3.5
@@ -20,4 +22,4 @@ typing_extensions==4.16.0
 uvicorn==0.53.0
 uvloop==0.22.1
 watchfiles==1.2.0
-websockets==17.1
+websockets==15.0.1

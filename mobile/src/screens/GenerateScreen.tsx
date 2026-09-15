@@ -1,49 +1,98 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  generateOutfit,
+  getDevelopmentUserId,
+  submitFeedback,
+} from '../services/api';
+import type { FeedbackReaction, GenerateResponse, RecommendationItem } from '../services/api';
 
 type Occasion = 'College' | 'Casual' | 'Date' | 'Interview' | 'Party';
-type Reaction = 'Not for me' | 'Like' | 'Love it';
 
-type OutfitRecommendation = {
-  occasion: Occasion;
-  styleMatch: number;
-  explanation: string;
-  pieces: string[];
+type FeedbackUiState = {
+  selected?: FeedbackReaction;
+  status: 'idle' | 'submitting' | 'saved' | 'error';
+  error?: string;
 };
 
 const occasions: Occasion[] = ['College', 'Casual', 'Date', 'Interview', 'Party'];
 
-const mockRecommendation: OutfitRecommendation = {
-  occasion: 'Casual',
-  styleMatch: 92,
-  explanation:
-    'Matches your neutral palette, relaxed silhouettes, and minimalist streetwear preferences.',
-  pieces: [
-    'Black oversized tee',
-    'Beige relaxed trousers',
-    'White sneakers',
-    'Silver accessories',
-  ],
-};
+const feedbackOptions: { label: string; value: FeedbackReaction }[] = [
+  { label: 'Like', value: 'like' },
+  { label: 'Maybe', value: 'maybe' },
+  { label: 'Not for me', value: 'dislike' },
+];
 
 export default function GenerateScreen() {
   const [selectedOccasion, setSelectedOccasion] = useState<Occasion | null>(null);
-  const [recommendation, setRecommendation] = useState<OutfitRecommendation | null>(null);
-  const [reaction, setReaction] = useState<Reaction | null>(null);
+  const [recommendation, setRecommendation] = useState<GenerateResponse | null>(null);
+  const [feedbackByResult, setFeedbackByResult] = useState<Record<number, FeedbackUiState>>({});
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const generateOutfit = () => {
-    if (!selectedOccasion) {
+  const requestOutfit = async () => {
+    if (!selectedOccasion || isGenerating) {
       return;
     }
 
-    setRecommendation({ ...mockRecommendation, occasion: selectedOccasion });
-    setReaction(null);
+    setErrorMessage(null);
+    setRecommendation(null);
+    setFeedbackByResult({});
+    setIsGenerating(true);
+    try {
+      const response = await generateOutfit(selectedOccasion, getDevelopmentUserId());
+      setRecommendation(response);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Outfit generation failed.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const selectReaction = (nextReaction: Reaction) => {
-    setReaction(nextReaction);
+  const sendFeedback = async (item: RecommendationItem, reaction: FeedbackReaction) => {
+    if (!recommendation) {
+      return;
+    }
+
+    const current = feedbackByResult[item.id];
+    if (current?.status === 'submitting' || current?.status === 'saved') {
+      return;
+    }
+
+    setFeedbackByResult((previous) => ({
+      ...previous,
+      [item.id]: { selected: reaction, status: 'submitting' },
+    }));
+
+    try {
+      await submitFeedback(recommendation.id, item.id, reaction);
+      setFeedbackByResult((previous) => ({
+        ...previous,
+        [item.id]: { selected: reaction, status: 'saved' },
+      }));
+    } catch (error) {
+      setFeedbackByResult((previous) => ({
+        ...previous,
+        [item.id]: {
+          selected: reaction,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Could not save feedback.',
+        },
+      }));
+    }
   };
+
+  const canGenerate = Boolean(selectedOccasion) && !isGenerating;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -82,20 +131,24 @@ export default function GenerateScreen() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: !selectedOccasion }}
-          disabled={!selectedOccasion}
-          onPress={generateOutfit}
+          accessibilityState={{ disabled: !canGenerate, busy: isGenerating }}
+          disabled={!canGenerate}
+          onPress={requestOutfit}
           style={({ pressed }) => [
             styles.generateButton,
-            !selectedOccasion && styles.generateButtonDisabled,
+            !canGenerate && styles.generateButtonDisabled,
             pressed && styles.pressed,
           ]}
         >
-          <Text style={[styles.generateButtonText, !selectedOccasion && styles.disabledText]}>
-            Generate Outfit
+          {isGenerating ? <ActivityIndicator color="#FFFFFF" /> : null}
+          <Text style={[styles.generateButtonText, !canGenerate && styles.disabledText]}>
+            {isGenerating ? 'Generating...' : 'Generate Outfit'}
           </Text>
-          <Text style={[styles.generateArrow, !selectedOccasion && styles.disabledText]}>→</Text>
+          {!isGenerating ? (
+            <Text style={[styles.generateArrow, !selectedOccasion && styles.disabledText]}>→</Text>
+          ) : null}
         </Pressable>
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         {!recommendation ? (
           <View style={styles.emptyState}>
@@ -106,62 +159,129 @@ export default function GenerateScreen() {
             </Text>
           </View>
         ) : (
-          <View style={styles.resultCard}>
-            <View style={styles.resultHeader}>
-              <View>
-                <Text style={styles.resultEyebrow}>{recommendation.occasion.toUpperCase()} LOOK</Text>
-                <Text style={styles.resultTitle}>A look for your day</Text>
-              </View>
-              <View style={styles.matchBadge}>
-                <Text style={styles.matchValue}>{recommendation.styleMatch}%</Text>
-                <Text style={styles.matchLabel}>match</Text>
-              </View>
-            </View>
-
-            <View style={styles.pieceList}>
-              {recommendation.pieces.map((piece, index) => (
-                <View key={piece} style={styles.pieceRow}>
-                  <View style={styles.pieceNumber}>
-                    <Text style={styles.pieceNumberText}>{index + 1}</Text>
-                  </View>
-                  <Text style={styles.pieceText}>{piece}</Text>
-                </View>
-              ))}
-            </View>
-
-            <Text style={styles.explanation}>{recommendation.explanation}</Text>
-
-            <View style={styles.reactionDivider} />
-            <Text style={styles.reactionTitle}>How does this feel?</Text>
-            <View style={styles.reactionRow}>
-              {(['Not for me', 'Like', 'Love it'] as Reaction[]).map((option) => {
-                const isSelected = reaction === option;
-                return (
-                  <Pressable
-                    key={option}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isSelected }}
-                    onPress={() => selectReaction(option)}
-                    style={({ pressed }) => [
-                      styles.reactionButton,
-                      isSelected && styles.reactionButtonSelected,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text style={[styles.reactionText, isSelected && styles.reactionTextSelected]}>
-                      {option}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            {reaction ? (
-              <Text style={styles.feedback}>We’ll use this to improve future recommendations.</Text>
+          <View style={styles.results}>
+            <Text style={styles.resultEyebrow}>{recommendation.occasion.toUpperCase()} LOOKS</Text>
+            {recommendation.provider_status !== 'ok' ? (
+              <Text style={styles.providerStatus}>
+                Provider status: {recommendation.provider_status}
+              </Text>
             ) : null}
+            {recommendation.recommendations.length === 0 ? (
+              <Text style={styles.explanation}>
+                No recommendations were returned. Provider status: {recommendation.provider_status}.
+              </Text>
+            ) : (
+              recommendation.recommendations.map((item) => (
+                <RecommendationCard
+                  key={item.id}
+                  item={item}
+                  feedback={feedbackByResult[item.id]}
+                  onReact={(reaction) => void sendFeedback(item, reaction)}
+                />
+              ))
+            )}
           </View>
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function RecommendationCard({
+  item,
+  feedback,
+  onReact,
+}: {
+  item: RecommendationItem;
+  feedback?: FeedbackUiState;
+  onReact: (reaction: FeedbackReaction) => void;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const isSubmitting = feedback?.status === 'submitting';
+  const isSaved = feedback?.status === 'saved';
+
+  const openSource = async () => {
+    if (!item.pinterest_url) {
+      return;
+    }
+    try {
+      await Linking.openURL(item.pinterest_url);
+    } catch {
+      // Linking failures stay on the card; feedback UI is independent.
+    }
+  };
+
+  return (
+    <View style={styles.resultCard}>
+      {imageFailed || !item.image_url ? (
+        <View style={styles.imageFallback}>
+          <Text style={styles.imageFallbackText}>Image unavailable</Text>
+        </View>
+      ) : (
+        <Image
+          source={{ uri: item.image_url }}
+          style={styles.cardImage}
+          resizeMode="cover"
+          onError={() => setImageFailed(true)}
+        />
+      )}
+
+      <View style={styles.cardBody}>
+        <View style={styles.resultHeader}>
+          <Text style={styles.resultTitle}>{item.title || 'Untitled look'}</Text>
+          <View style={styles.matchBadge}>
+            <Text style={styles.matchValue}>{item.match_score}%</Text>
+            <Text style={styles.matchLabel}>match</Text>
+          </View>
+        </View>
+
+        {item.description ? <Text style={styles.pieceDescription}>{item.description}</Text> : null}
+        <Text style={styles.explanation}>{item.match_reason}</Text>
+
+        {item.pinterest_url ? (
+          <Pressable
+            accessibilityRole="link"
+            onPress={() => void openSource()}
+            style={({ pressed }) => [styles.sourceButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.sourceButtonText}>View source</Text>
+          </Pressable>
+        ) : null}
+
+        <View style={styles.reactionDivider} />
+        <Text style={styles.reactionTitle}>How does this feel?</Text>
+        <View style={styles.reactionRow}>
+          {feedbackOptions.map((option) => {
+            const isSelected = feedback?.selected === option.value;
+            const disabled = isSubmitting || isSaved;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isSelected, disabled }}
+                disabled={disabled}
+                onPress={() => onReact(option.value)}
+                style={({ pressed }) => [
+                  styles.reactionButton,
+                  isSelected && styles.reactionButtonSelected,
+                  disabled && styles.reactionDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.reactionText, isSelected && styles.reactionTextSelected]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {isSubmitting ? <Text style={styles.feedback}>Saving your reaction...</Text> : null}
+        {isSaved ? <Text style={styles.feedback}>Saved. We’ll use this to improve future looks.</Text> : null}
+        {feedback?.status === 'error' ? (
+          <Text style={styles.feedbackError}>{feedback.error ?? 'Could not save feedback.'}</Text>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -283,16 +403,39 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     textAlign: 'center',
   },
-  resultCard: {
+  results: {
     marginTop: 28,
-    padding: 20,
+    gap: 16,
+  },
+  resultCard: {
+    overflow: 'hidden',
     borderRadius: 18,
     backgroundColor: '#FFFFFF',
+  },
+  cardImage: {
+    width: '100%',
+    height: 240,
+    backgroundColor: '#EEE8F1',
+  },
+  imageFallback: {
+    height: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEE8F1',
+  },
+  imageFallbackText: {
+    color: '#8A7894',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  cardBody: {
+    padding: 20,
   },
   resultHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 12,
   },
   resultEyebrow: {
     color: '#8A7894',
@@ -301,7 +444,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   resultTitle: {
-    marginTop: 6,
+    flex: 1,
     color: '#312B37',
     fontSize: 20,
     fontWeight: '700',
@@ -323,38 +466,42 @@ const styles = StyleSheet.create({
     color: '#8A7894',
     fontSize: 11,
   },
-  pieceList: {
-    gap: 14,
-    marginTop: 24,
+  pieceDescription: {
+    marginTop: 12,
+    color: '#6E6574',
+    fontSize: 14,
+    lineHeight: 20,
   },
-  pieceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  explanation: {
+    marginTop: 12,
+    color: '#6E6574',
+    fontSize: 14,
+    lineHeight: 21,
   },
-  pieceNumber: {
-    alignItems: 'center',
+  providerStatus: {
+    color: '#8A7894',
+    fontSize: 13,
+  },
+  sourceButton: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    marginTop: 14,
     justifyContent: 'center',
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#F2F0F5',
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#EEE8F1',
   },
-  pieceNumberText: {
+  sourceButtonText: {
     color: '#6D5680',
     fontSize: 13,
     fontWeight: '700',
   },
-  pieceText: {
-    color: '#49404E',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  explanation: {
-    marginTop: 22,
-    color: '#6E6574',
+  errorText: {
+    marginTop: 12,
+    color: '#A13F38',
     fontSize: 14,
-    lineHeight: 21,
+    lineHeight: 20,
+    textAlign: 'center',
   },
   reactionDivider: {
     height: 1,
@@ -386,10 +533,14 @@ const styles = StyleSheet.create({
     borderColor: '#6D5680',
     backgroundColor: '#EEE8F1',
   },
+  reactionDisabled: {
+    opacity: 0.7,
+  },
   reactionText: {
     color: '#6E6574',
     fontSize: 12,
     fontWeight: '600',
+    textAlign: 'center',
   },
   reactionTextSelected: {
     color: '#6D5680',
@@ -397,6 +548,13 @@ const styles = StyleSheet.create({
   feedback: {
     marginTop: 14,
     color: '#6D5680',
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  feedbackError: {
+    marginTop: 14,
+    color: '#A13F38',
     fontSize: 13,
     lineHeight: 19,
     textAlign: 'center',
