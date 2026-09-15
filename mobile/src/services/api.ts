@@ -107,6 +107,47 @@ export async function getHealth(): Promise<HealthResponse> {
   return data;
 }
 
+function inspirationFileName(image: InspirationImage, index: number): string {
+  const fileName = image.fileName?.trim();
+  if (fileName) {
+    return fileName;
+  }
+  const mime = image.mimeType ?? '';
+  const extension = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+  return `inspiration-${index + 1}.${extension}`;
+}
+
+async function appendInspirationImage(
+  formData: FormData,
+  image: InspirationImage,
+  index: number,
+): Promise<void> {
+  const name = inspirationFileName(image, index);
+  const mimeType = image.mimeType?.trim() || 'image/jpeg';
+
+  let blob: Blob;
+  try {
+    const response = await fetch(image.uri);
+    if (!response.ok) {
+      throw new Error('unreadable');
+    }
+    blob = await response.blob();
+  } catch {
+    throw new ApiRequestError(`Could not read inspiration image ${name}.`);
+  }
+
+  const type = blob.type && blob.type !== 'application/octet-stream' ? blob.type : mimeType;
+
+  // Expo 52+ uses WHATWG FormData. The old RN `{ uri, name, type }` object is
+  // stringified to "[object Object]" and FastAPI 422s (Expected UploadFile).
+  if (typeof File === 'function') {
+    formData.append('images', new File([blob], name, { type }));
+    return;
+  }
+
+  formData.append('images', blob, name);
+}
+
 export async function analyzeStyle(
   images: InspirationImage[],
   userId: number,
@@ -116,14 +157,7 @@ export async function analyzeStyle(
   formData.append('user_id', String(userId));
 
   for (const [index, image] of images.entries()) {
-    formData.append(
-      'images',
-      {
-        uri: image.uri,
-        name: image.fileName ?? `inspiration-${index + 1}.jpg`,
-        type: image.mimeType ?? 'image/jpeg',
-      } as unknown as Blob,
-    );
+    await appendInspirationImage(formData, image, index);
   }
 
   for (const url of inspirationUrls) {

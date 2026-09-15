@@ -11,12 +11,23 @@ fails explicitly (never falls back to mock).
 
 from __future__ import annotations
 
+import time
+
 from google import genai
 from google.genai import types
 from pydantic import ValidationError
 
 from app.config import settings
 from app.schemas.style import StyleDNA
+
+_RETRYABLE_MARKERS = ("503", "UNAVAILABLE", "HIGH DEMAND", "429", "RESOURCE_EXHAUSTED")
+_MAX_ATTEMPTS = 3
+
+
+def _is_retryable_gemini_error(exc: BaseException) -> bool:
+    text = str(exc).upper()
+    return any(marker in text for marker in _RETRYABLE_MARKERS)
+
 
 _PROMPT = """You are a fashion stylist analyzing a collection of inspiration photos.
 
@@ -55,14 +66,26 @@ def analyze_images(images: list[tuple[bytes, str]]) -> StyleDNA:
 
     try:
         client = genai.Client(api_key=settings.gemini_api_key)
-        response = client.models.generate_content(
-            model=settings.gemini_model,
-            contents=parts,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=StyleDNA,
-            ),
-        )
+        response = None
+        last_exc: Exception | None = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = client.models.generate_content(
+                    model=settings.gemini_model,
+                    contents=parts,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=StyleDNA,
+                    ),
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt == _MAX_ATTEMPTS or not _is_retryable_gemini_error(exc):
+                    raise
+                time.sleep(2 * attempt)
+        if response is None:
+            raise last_exc or GeminiAnalyzerError("Gemini API failure")
     except GeminiAnalyzerError:
         raise
     except Exception as exc:
