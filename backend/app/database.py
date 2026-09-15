@@ -51,6 +51,32 @@ def init_db() -> None:
     import app.models  # noqa: F401  (registers all tables on Base.metadata)
 
     Base.metadata.create_all(bind=engine)
+    _ensure_inspiration_source_types()
+
+
+def _ensure_inspiration_source_types() -> None:
+    """Allow source_type='flickr' on existing databases.
+
+    ``create_all`` will not ALTER an existing CHECK constraint. Fresh DBs get
+    the updated constraint from the model; already-created Docker volumes need
+    this explicit drop/re-add. Safe to run on every startup.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE inspiration_sources "
+                "DROP CONSTRAINT IF EXISTS ck_inspiration_source_type"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE inspiration_sources "
+                "ADD CONSTRAINT ck_inspiration_source_type "
+                "CHECK (source_type IN ('image', 'pinterest', 'flickr'))"
+            )
+        )
 
 
 def get_db() -> Generator[Session, None, None]:

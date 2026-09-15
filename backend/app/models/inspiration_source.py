@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 # Controlled vocabularies (kept here as the single source of truth).
-SOURCE_TYPES = ("image", "pinterest")
+SOURCE_TYPES = ("image", "pinterest", "flickr")
 INSPIRATION_STATUSES = ("pending", "processed", "failed")
 
 
@@ -39,7 +39,7 @@ class InspirationSource(Base):
     __tablename__ = "inspiration_sources"
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('image', 'pinterest')",
+            "source_type IN ('image', 'pinterest', 'flickr')",
             name="ck_inspiration_source_type",
         ),
         CheckConstraint(

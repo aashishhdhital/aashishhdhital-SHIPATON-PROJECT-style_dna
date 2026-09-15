@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.providers.flickr_provider import FlickrProviderError, FlickrRateLimitError
 from app.schemas.feedback import FeedbackRequest, FeedbackResponse
 from app.schemas.recommendation import GenerateRequest, GenerateResponse
 from app.services import feedback_service, recommendation_service
@@ -37,6 +38,18 @@ def generate_outfits(
     except recommendation_service.ProfileNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except FlickrRateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except FlickrProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+    except recommendation_service.ProviderUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
         ) from exc
 
 
