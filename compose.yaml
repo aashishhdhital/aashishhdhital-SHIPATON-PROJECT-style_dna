@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: styledna
+      POSTGRES_PASSWORD: styledna
+      POSTGRES_DB: styledna
+    volumes:
+      - styledna_db:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+
+    ports:
+      - "8000:8000"
+
+    # Load Gemini/Flickr keys and provider switches from backend/.env.
+    # Secrets stay on the host; they are NOT baked into the image.
+    env_file:
+      - ./backend/.env
+
+    environment:
+      # Must win over any DATABASE_URL in backend/.env so Docker Postgres
+      # is reached via the compose service hostname "db", not localhost.
+      DATABASE_URL: postgresql+psycopg://styledna:styledna@db:5432/styledna
+
+    depends_on:
+      - db
+
+volumes:
+  styledna_db:

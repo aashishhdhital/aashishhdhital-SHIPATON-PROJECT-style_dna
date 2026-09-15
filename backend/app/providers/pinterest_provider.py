@@ -19,31 +19,7 @@ never be mistaken for real pin links.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-class PinterestProviderError(Exception):
-    """Raised when the provider cannot return results (network, auth, rate limit).
-
-    The mock never raises this; it exists so the service can define failure
-    handling now and the real provider can use it later.
-    """
-
-
-@dataclass(frozen=True)
-class PinCandidate:
-    """Normalized internal representation of a candidate Pinterest pin.
-
-    ``tags`` are internal ranking signals (not returned to the client); the other
-    fields map onto ``RecommendationResult`` / ``RecommendationItem``.
-    """
-
-    external_id: str
-    title: str
-    image_url: str
-    pinterest_url: str
-    description: str | None
-    tags: tuple[str, ...]
+from app.providers.candidates import PinCandidate, ProviderError as PinterestProviderError
 
 
 # Deterministic local-dev fixtures. Host is intentionally ``mock.invalid`` so

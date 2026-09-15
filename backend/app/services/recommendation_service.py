@@ -20,12 +20,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.recommendation_result import RecommendationResult
 from app.models.recommendation_session import RecommendationSession
 from app.models.style_profile import StyleProfile
 from app.models.user import User
-from app.providers import pinterest_provider
-from app.providers.pinterest_provider import PinCandidate, PinterestProviderError
+from app.providers import flickr_provider, pinterest_provider
+from app.providers.candidates import PinCandidate, ProviderError, VisualCandidate
+from app.providers.flickr_provider import FlickrProviderError, FlickrRateLimitError
 from app.schemas.recommendation import GenerateResponse, RecommendationItem
 from app.schemas.style import StyleDNA
 
@@ -44,6 +46,10 @@ class UserNotFoundError(Exception):
 
 class ProfileNotFoundError(Exception):
     """Raised when the user exists but has no StyleProfile to base results on."""
+
+
+class ProviderUnavailableError(Exception):
+    """Raised when the configured recommendation provider fails."""
 
 
 def _load_latest_profile(db: Session, user_id: int) -> StyleProfile:
@@ -132,6 +138,45 @@ def _score_candidate(
     return score, matched
 
 
+def _enrich_candidate_tags(
+    candidate: VisualCandidate, terms: set[str], intent: str
+) -> VisualCandidate:
+    """Union Flickr tags with StyleDNA/intent terms found in title/description.
+
+    Flickr tags are the photographer's tags, not a fashion taxonomy. The extra
+    tags we add are only vocabulary we already know from Style DNA / search
+    intent when those words actually appear in the photo metadata. We do not
+    invent fashion labels and we do not call Gemini per recommendation.
+    """
+    haystack = " ".join(
+        part.lower()
+        for part in (candidate.title, candidate.description or "", " ".join(candidate.tags))
+        if part
+    )
+    derived = {t for t in terms if t and t in haystack}
+    merged = tuple(dict.fromkeys([*candidate.tags, *sorted(derived)]))
+    if merged == candidate.tags:
+        return candidate
+    return VisualCandidate(
+        external_id=candidate.external_id,
+        title=candidate.title,
+        image_url=candidate.image_url,
+        pinterest_url=candidate.pinterest_url,
+        description=candidate.description,
+        tags=merged,
+    )
+
+
+def _search_candidates(search_intent: str, limit: int) -> list[VisualCandidate]:
+    """Dispatch to mock Pinterest or real Flickr. Never silent-fallback."""
+    provider = settings.recommendation_provider
+    if provider in {"mock", "pinterest"}:
+        return pinterest_provider.search(search_intent, limit=limit)
+    if provider == "flickr":
+        return flickr_provider.search(search_intent, limit=max(limit, 20))
+    raise ProviderUnavailableError(f"Unknown RECOMMENDATION_PROVIDER: {provider}")
+
+
 def _match_reason(matched: list[str], occasion: str) -> str:
     if matched:
         return f"Matches your {', '.join(matched)} preferences for {occasion}."
@@ -159,22 +204,27 @@ def generate(
     # 3. Build the search intent.
     search_intent = build_search_intent(dna, occasion, context)
 
-    # 4. Ask the provider for candidates. The mock never fails, but we structure
-    # failure handling now: a provider error yields an empty, "failed" session
-    # rather than crashing (real degraded/failed behavior comes with the real
-    # integration).
-    provider_status = "ok"
+    # 4. Ask the configured provider (mock Pinterest fixtures OR Flickr search).
+    # Real mode never falls back to mock fixtures.
+    terms = _style_terms(dna)
     try:
-        candidates = pinterest_provider.search(search_intent, limit=_MAX_RESULTS)
-    except PinterestProviderError:
-        candidates = []
-        provider_status = "failed"
+        raw_candidates = _search_candidates(search_intent, _MAX_RESULTS)
+    except FlickrRateLimitError:
+        raise
+    except FlickrProviderError:
+        raise
+    except ProviderError as exc:
+        raise ProviderUnavailableError(str(exc)) from exc
+
+    provider_status = "ok" if raw_candidates else "degraded"
+    candidates = [
+        _enrich_candidate_tags(c, terms, search_intent) for c in raw_candidates
+    ]
 
     # 5. Rank candidates using Style DNA overlap + feedback preference weights.
-    terms = _style_terms(dna)
     scored = [(*_score_candidate(c, terms, weights), c) for c in candidates]
-    # Sort by score desc, then external_id for a stable deterministic order.
     scored.sort(key=lambda t: (-t[0], t[2].external_id))
+    scored = scored[:_MAX_RESULTS]
 
     # 6. Persist the session and its results.
     session = RecommendationSession(
