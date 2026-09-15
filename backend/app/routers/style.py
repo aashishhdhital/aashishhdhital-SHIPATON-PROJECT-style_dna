@@ -7,7 +7,10 @@ album URLs may be sent there or as ``inspiration_urls``.
 
 from __future__ import annotations
 
+from typing import Annotated, Any
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -26,12 +29,54 @@ from app.storage.local_storage import detect_image_type
 router = APIRouter(tags=["style"])
 
 
+def _absent_if_empty_files(value: Any) -> Any:
+    """Treat Swagger's empty optional file input as omitted, not invalid.
+
+    Swagger/OpenAPI often submits unused file fields as ``images=`` (an empty
+    string). FastAPI then 422s because it expected an UploadFile. Empty values
+    are dropped; any non-empty non-file value is left unchanged so validation
+    still rejects it.
+    """
+    if value is None or value == "" or value == b"":
+        return None
+    if isinstance(value, list):
+        kept = [item for item in value if item not in (None, "", b"")]
+        return kept or None
+    return value
+
+
+def _absent_if_empty_form_strings(value: Any) -> Any:
+    """Treat empty optional text form fields (``pinterest_urls=``) as omitted."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, list):
+        kept = [
+            item
+            for item in value
+            if not (isinstance(item, str) and not item.strip())
+        ]
+        return kept or None
+    return value
+
+
+OptionalImages = Annotated[
+    list[UploadFile] | None,
+    BeforeValidator(_absent_if_empty_files),
+    File(),
+]
+OptionalUrlList = Annotated[
+    list[str] | None,
+    BeforeValidator(_absent_if_empty_form_strings),
+    Form(),
+]
+
+
 @router.post("/style/analyze", response_model=AnalyzeResponse)
 async def analyze_style(
     user_id: int = Form(...),
-    images: list[UploadFile] | None = File(None),
-    pinterest_urls: list[str] | None = Form(None),
-    inspiration_urls: list[str] | None = Form(None),
+    images: OptionalImages = None,
+    pinterest_urls: OptionalUrlList = None,
+    inspiration_urls: OptionalUrlList = None,
     db: Session = Depends(get_db),
 ) -> AnalyzeResponse:
     images = images or []
