@@ -1,47 +1,143 @@
-import { useNavigation } from '@react-navigation/native';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { RouteProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-type RootTabParamList = {
-  Inspiration: undefined;
-  'Style DNA': undefined;
-  Generate: undefined;
-  Profile: undefined;
-};
+import type { RootTabParamList } from '../navigation';
+import { getDevelopmentUserId, getProfile, isMissingProfileError } from '../services/api';
+import type { StyleDna } from '../services/api';
 
 type StyleDnaNavigation = BottomTabNavigationProp<RootTabParamList>;
 
-type StyleCategory = {
-  name: string;
-  percentage: number;
-  color: string;
+const categoryColors = ['#3F716A', '#6B7F7B', '#A15C38', '#B89B74'];
+const colorValues: Record<string, string> = {
+  black: '#252525',
+  white: '#FFFFFF',
+  cream: '#F3EBDD',
+  beige: '#D8C4A8',
+  gray: '#8D9695',
+  grey: '#8D9695',
+  blue: '#66849A',
+  navy: '#2C3E50',
+  brown: '#8B5E3C',
+  green: '#4F7A62',
+  red: '#A13F38',
+  pink: '#D4A5A5',
+  tan: '#C8B08A',
 };
-
-type StyleColor = {
-  name: string;
-  value: string;
-  border?: string;
-};
-
-const styleCategories: StyleCategory[] = [
-  { name: 'Minimalist', percentage: 38, color: '#3F716A' },
-  { name: 'Streetwear', percentage: 31, color: '#6B7F7B' },
-  { name: 'Smart Casual', percentage: 19, color: '#A15C38' },
-  { name: 'Vintage', percentage: 12, color: '#B89B74' },
-];
-
-const preferredColors: StyleColor[] = [
-  { name: 'Black', value: '#252525' },
-  { name: 'White', value: '#FFFFFF', border: '#D9D3CC' },
-  { name: 'Beige', value: '#D8C4A8' },
-  { name: 'Blue', value: '#66849A' },
-];
-
-const styleTraits = ['Neutral palette', 'Relaxed silhouettes', 'Layering', 'Clean sneakers'];
 
 export default function StyleDnaScreen() {
   const navigation = useNavigation<StyleDnaNavigation>();
+  const route = useRoute<RouteProp<RootTabParamList, 'Style DNA'>>();
+  const analysis = route.params?.analysis;
+
+  const [styleDna, setStyleDna] = useState<StyleDna | null>(analysis?.style_dna ?? null);
+  const [sourcesProcessed, setSourcesProcessed] = useState<number | null>(
+    analysis?.sources_processed ?? null,
+  );
+  const [isLoading, setIsLoading] = useState(!analysis?.style_dna);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [hasNoProfile, setHasNoProfile] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (analysis?.style_dna) {
+        setStyleDna(analysis.style_dna);
+        setSourcesProcessed(analysis.sources_processed);
+        setHasNoProfile(false);
+        setErrorMessage(null);
+        setIsLoading(false);
+        return;
+      }
+
+      let cancelled = false;
+
+      const loadProfile = async () => {
+        setIsLoading(true);
+        setErrorMessage(null);
+        try {
+          const profile = await getProfile(getDevelopmentUserId());
+          if (cancelled) {
+            return;
+          }
+          setStyleDna(profile.style_dna);
+          setSourcesProcessed(null);
+          setHasNoProfile(false);
+        } catch (error) {
+          if (cancelled) {
+            return;
+          }
+          setStyleDna(null);
+          if (isMissingProfileError(error)) {
+            setHasNoProfile(true);
+            setErrorMessage(null);
+          } else {
+            setHasNoProfile(false);
+            setErrorMessage(error instanceof Error ? error.message : 'Could not load Style DNA.');
+          }
+        } finally {
+          if (!cancelled) {
+            setIsLoading(false);
+          }
+        }
+      };
+
+      void loadProfile();
+      return () => {
+        cancelled = true;
+      };
+    }, [analysis]),
+  );
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={styles.emptyState}>
+          <ActivityIndicator color="#3F716A" size="large" />
+          <Text style={[styles.subtitle, styles.emptySubtitle]}>Loading your Style DNA...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={styles.emptyState}>
+          <Text style={styles.title}>Your Style DNA</Text>
+          <Text style={styles.errorText}>{errorMessage}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => navigation.navigate('Inspiration')}
+            style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+          >
+            <Text style={styles.ctaText}>Go to Inspiration</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!styleDna || hasNoProfile) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={styles.emptyState}>
+          <Text style={styles.title}>Your Style DNA</Text>
+          <Text style={[styles.subtitle, styles.emptySubtitle]}>
+            Build your Style DNA from inspiration images or a Flickr URL to see your profile here.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => navigation.navigate('Inspiration')}
+            style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+          >
+            <Text style={styles.ctaText}>Add inspiration</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -58,60 +154,86 @@ export default function StyleDnaScreen() {
               <Text style={styles.cardEyebrow}>STYLE MIX</Text>
               <Text style={styles.cardTitle}>Your signature blend</Text>
             </View>
-            <Text style={styles.primaryPercentage}>38%</Text>
+            <Text style={styles.primaryPercentage}>{styleDna.styles[0]?.score ?? 0}%</Text>
           </View>
 
           <View style={styles.categoryList}>
-            {styleCategories.map((category) => (
-              <View key={category.name} style={styles.categoryRow}>
-                <View style={styles.categoryLabelRow}>
-                  <Text style={styles.categoryName}>{category.name}</Text>
-                  <Text style={styles.categoryPercentage}>{category.percentage}%</Text>
+            {styleDna.styles.length === 0 ? (
+              <Text style={styles.detailText}>No style mix reported yet.</Text>
+            ) : (
+              styleDna.styles.map((category, index) => (
+                <View key={`${category.name}-${index}`} style={styles.categoryRow}>
+                  <View style={styles.categoryLabelRow}>
+                    <Text style={styles.categoryName}>{formatLabel(category.name)}</Text>
+                    <Text style={styles.categoryPercentage}>{category.score}%</Text>
+                  </View>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          width: `${Math.max(0, Math.min(category.score, 100))}%`,
+                          backgroundColor: categoryColors[index % categoryColors.length],
+                        },
+                      ]}
+                    />
+                  </View>
                 </View>
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${category.percentage}%`, backgroundColor: category.color },
-                    ]}
-                  />
-                </View>
-              </View>
-            ))}
+              ))
+            )}
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your color palette</Text>
           <View style={styles.paletteRow}>
-            {preferredColors.map((color) => (
-              <View key={color.name} style={styles.paletteItem}>
-                <View
-                  style={[
-                    styles.swatch,
-                    { backgroundColor: color.value },
-                    color.border ? { borderColor: color.border, borderWidth: 1 } : null,
-                  ]}
-                />
-                <Text style={styles.paletteLabel}>{color.name}</Text>
-              </View>
-            ))}
+            {styleDna.colors.length === 0 ? (
+              <Text style={styles.detailText}>None reported</Text>
+            ) : (
+              styleDna.colors.map((color) => (
+                <View key={color} style={styles.paletteItem}>
+                  <View
+                    style={[
+                      styles.swatch,
+                      { backgroundColor: colorValues[color.toLowerCase()] ?? '#C8C8C8' },
+                      color.toLowerCase() === 'white' ? { borderColor: '#D9D3CC', borderWidth: 1 } : null,
+                    ]}
+                  />
+                  <Text style={styles.paletteLabel}>{formatLabel(color)}</Text>
+                </View>
+              ))
+            )}
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Key style traits</Text>
           <View style={styles.traitsRow}>
-            {styleTraits.map((trait) => (
-              <View key={trait} style={styles.traitChip}>
-                <Text style={styles.traitMark}>✓</Text>
-                <Text style={styles.traitText}>{trait}</Text>
-              </View>
-            ))}
+            {styleDna.traits.length === 0 ? (
+              <Text style={styles.detailText}>None reported</Text>
+            ) : (
+              styleDna.traits.map((trait) => (
+                <View key={trait} style={styles.traitChip}>
+                  <Text style={styles.traitMark}>✓</Text>
+                  <Text style={styles.traitText}>{formatLabel(trait)}</Text>
+                </View>
+              ))
+            )}
           </View>
         </View>
 
-        <Text style={styles.context}>Based on 5 inspiration images</Text>
+        {sourcesProcessed != null ? (
+          <Text style={styles.context}>Based on {sourcesProcessed} inspiration sources</Text>
+        ) : (
+          <Text style={styles.context}>Loaded from your latest saved profile</Text>
+        )}
+
+        <View style={styles.details}>
+          <Text style={styles.detailText}>Garments: {formatList(styleDna.garments)}</Text>
+          <Text style={styles.detailText}>Fits: {formatList(styleDna.fits)}</Text>
+          <Text style={styles.detailText}>Patterns: {formatList(styleDna.patterns)}</Text>
+          <Text style={styles.detailText}>Materials: {formatList(styleDna.materials)}</Text>
+        </View>
 
         <Pressable
           accessibilityRole="button"
@@ -124,6 +246,14 @@ export default function StyleDnaScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function formatLabel(value: string): string {
+  return value.replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatList(values: string[]): string {
+  return values.length > 0 ? values.map(formatLabel).join(', ') : 'None reported';
 }
 
 const styles = StyleSheet.create({
@@ -222,7 +352,9 @@ const styles = StyleSheet.create({
   },
   paletteRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    gap: 16,
     marginTop: 18,
     paddingHorizontal: 4,
   },
@@ -270,9 +402,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
   },
+  details: {
+    gap: 6,
+    marginTop: 14,
+  },
+  detailText: {
+    color: '#5F706D',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 8,
+  },
+  emptySubtitle: {
+    textAlign: 'center',
+  },
+  errorText: {
+    marginTop: 12,
+    color: '#A13F38',
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
   cta: {
     minHeight: 56,
     marginTop: 14,
+    paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
